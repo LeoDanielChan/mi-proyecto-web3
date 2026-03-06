@@ -13,14 +13,26 @@ function getStore(): Map<string, Game> {
     if (!global.__solflip_games) {
         global.__solflip_games = new Map();
     }
+    // Auto-limpiar partidas muy antiguas (> 10 min) para no acumular basura
+    const TEN_MIN = 10 * 60 * 1000;
+    const now = Date.now();
+    for (const [id, g] of global.__solflip_games) {
+        if (now - g.createdAt > TEN_MIN) {
+            global.__solflip_games.delete(id);
+        }
+    }
     return global.__solflip_games;
 }
 
-// GET /api/games — Listar partidas activas (waiting o matched)
+// GET /api/games — Lista partidas activas para el lobby (waiting/matched)
+// También incluye "resolved" para que el jugador 1 pueda hacer polling del resultado
 export async function GET() {
     const store = getStore();
     const games = Array.from(store.values()).filter(
-        (g) => g.status === "waiting" || g.status === "matched",
+        (g) =>
+            g.status === "waiting" ||
+            g.status === "matched" ||
+            g.status === "resolved",
     );
     return NextResponse.json({ games }, { status: 200 });
 }
@@ -43,6 +55,17 @@ export async function POST(request: Request) {
         // Evitar duplicados
         if (store.has(id)) {
             return NextResponse.json({ game: store.get(id) }, { status: 200 });
+        }
+
+        // Verificar que el jugador no tenga ya una partida activa en espera
+        const hasActiveGame = Array.from(store.values()).some(
+            (g) => g.player1 === player1 && g.status === "waiting",
+        );
+        if (hasActiveGame) {
+            return NextResponse.json(
+                { error: "Ya tienes una partida esperando oponente" },
+                { status: 409 },
+            );
         }
 
         const game: Game = {

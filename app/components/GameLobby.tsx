@@ -62,12 +62,17 @@ export function GameLobby() {
     };
   }, []); // ← array vacío: el intervalo solo se crea al montar el componente
 
+  // Partidas disponibles para unirse: solo las que esperan oponente y no son mías
   const waitingGames = store.games.filter(
     (g) => g.status === "waiting" && g.player1 !== walletAddress,
   );
 
+  // Mi partida activa: cualquier estado en curso (waiting o matched)
+  // Mientras exista, se oculta el formulario de crear para evitar duplicados
   const myWaitingGame = store.games.find(
-    (g) => g.status === "waiting" && g.player1 === walletAddress,
+    (g) =>
+      (g.status === "waiting" || g.status === "matched") &&
+      (g.player1 === walletAddress || g.player2 === walletAddress),
   );
 
   if (!walletAddress) {
@@ -163,20 +168,26 @@ export function GameLobby() {
         </div>
       )}
 
-      {/* Mi partida esperando */}
+      {/* Mi partida activa (waiting o matched) */}
       {myWaitingGame && (
         <div className="glass-card rounded-2xl p-6 gradient-border animate-pulse-glow">
           <div className="flex items-center gap-2 mb-4">
             <span className="h-3 w-3 rounded-full bg-warning animate-pulse" />
             <h2 className="text-lg font-bold text-foreground">
-              Esperando oponente…
+              {myWaitingGame.status === "matched"
+                ? "¡Oponente encontrado! Resolviendo…"
+                : "Esperando oponente…"}
             </h2>
           </div>
           <div className="space-y-2 mb-4">
             <div className="flex justify-between text-sm">
               <span className="text-muted">Tu lado</span>
               <span className="text-foreground font-medium">
-                {myWaitingGame.player1Guess === "heads" ? "👑 Cara" : "🔵 Cruz"}
+                {(myWaitingGame.player1 === walletAddress
+                  ? myWaitingGame.player1Guess
+                  : myWaitingGame.player2Guess) === "heads"
+                  ? "👑 Cara"
+                  : "🔵 Cruz"}
               </span>
             </div>
             <div className="flex justify-between text-sm">
@@ -188,10 +199,13 @@ export function GameLobby() {
           </div>
           <div className="flex items-center gap-2 text-muted text-xs">
             <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted/30 border-t-muted" />
-            El oponente debe abrir la misma URL en su dispositivo
+            {myWaitingGame.status === "matched"
+              ? "Determinando ganador en el servidor…"
+              : "El oponente debe abrir la misma URL en su dispositivo"}
           </div>
         </div>
       )}
+
 
       {/* Available Games */}
       <div className="glass-card rounded-2xl p-6">

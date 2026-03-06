@@ -109,9 +109,8 @@ export function CoinFlipAnimation() {
             {/* Resultado */}
             <div className="text-7xl mb-4">{isWinner ? "🎉" : "💀"}</div>
             <h2
-              className={`text-3xl font-black mb-2 ${
-                isWinner ? "text-success" : "text-danger"
-              }`}
+              className={`text-3xl font-black mb-2 ${isWinner ? "text-success" : "text-danger"
+                }`}
             >
               {isWinner ? "¡GANASTE!" : "PERDISTE"}
             </h2>
@@ -128,7 +127,7 @@ export function CoinFlipAnimation() {
               </p>
             </div>
 
-            {/* Perdedor: botón de pagar */}
+            {/* Perdedor: botón de pagar (solo si no se hizo automáticamente) */}
             {isLoser && !isPaid && (
               <div className="mb-4">
                 <p className="text-warning text-sm mb-3">
@@ -156,12 +155,23 @@ export function CoinFlipAnimation() {
               </div>
             )}
 
-            {/* Ganador: esperando pago */}
+            {/* Pagando (automático) */}
+            {isLoser && isPaying && (
+              <div className="mb-4">
+                <span className="flex items-center justify-center gap-2 text-warning text-sm">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-warning/30 border-t-warning" />
+                  Enviando pago automático…
+                </span>
+              </div>
+            )}
+
+            {/* Ganador: esperando pago o polling */}
             {isWinner && !isPaid && (
               <div className="mb-4">
-                <p className="text-accent-teal text-sm">
-                  ⏳ Esperando que el perdedor envíe {game.betSol} SOL…
-                </p>
+                <span className="flex items-center justify-center gap-2 text-accent-teal text-sm">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-accent-teal/30 border-t-accent-teal" />
+                  Esperando que el perdedor envíe {game.betSol} SOL…
+                </span>
               </div>
             )}
 

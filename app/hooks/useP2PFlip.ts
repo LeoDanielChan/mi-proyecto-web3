@@ -11,7 +11,8 @@ import {
 
 export type FlipState = "idle" | "waiting" | "flipping" | "done" | "paying";
 
-const POLL_INTERVAL_MS = 2500; // polling para el jugador 1 esperando oponente
+// Polling: cada cuánto consulta el jugador 1 el estado de su partida
+const POLL_PLAYER1_MS = 2000;
 
 export function useP2PFlip() {
   const session = useWalletSession();
@@ -20,26 +21,62 @@ export function useP2PFlip() {
 
   const [flipState, setFlipState] = useState<FlipState>("idle");
   const [error, setError] = useState<string | null>(null);
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Refs para intervalos — evitan dependencias circulares en closures
+  const opponentPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const resolvePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Ref a funciones del store para usar dentro de setInterval sin re-crear closures
+  const storeRef = useRef(store);
+  useEffect(() => {
+    storeRef.current = store;
+  });
 
   const walletAddress = session?.account.address.toString() ?? null;
+  const walletRef = useRef(walletAddress);
+  useEffect(() => {
+    walletRef.current = walletAddress;
+  });
 
-  // --- Helpers API ---
+  const sendSolRef = useRef(sendSol);
+  useEffect(() => {
+    sendSolRef.current = sendSol;
+  });
 
-  async function apiCreateGame(game: Game): Promise<Game | null> {
-    const res = await fetch("/api/games", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: game.id,
-        player1: game.player1,
-        player1Guess: game.player1Guess,
-        betSol: game.betSol,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Error al crear partida");
-    return data.game as Game;
+  // Cleanup al desmontar
+  useEffect(() => {
+    return () => {
+      stopOpponentPoll();
+      stopResolvePoll();
+    };
+  }, []);
+
+  // ─── Helpers internos ────────────────────────────────────────────────────────
+
+  function stopOpponentPoll() {
+    if (opponentPollRef.current) {
+      clearInterval(opponentPollRef.current);
+      opponentPollRef.current = null;
+    }
+  }
+
+  function stopResolvePoll() {
+    if (resolvePollRef.current) {
+      clearInterval(resolvePollRef.current);
+      resolvePollRef.current = null;
+    }
+  }
+
+  async function apiGetGame(gameId: string): Promise<Game | null> {
+    try {
+      const res = await fetch(`/api/games/${gameId}`);
+      if (res.status === 404) return null;
+      const data = await res.json();
+      if (!res.ok) return null;
+      return data.game as Game;
+    } catch {
+      return null;
+    }
   }
 
   async function apiPatchGame(
@@ -56,81 +93,106 @@ export function useP2PFlip() {
     return data.game as Game;
   }
 
-  async function apiGetGame(gameId: string): Promise<Game | null> {
-    const res = await fetch(`/api/games/${gameId}`);
-    if (res.status === 404) return null;
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Error al obtener partida");
-    return data.game as Game;
-  }
-
   async function apiDeleteGame(gameId: string): Promise<void> {
     await fetch(`/api/games/${gameId}`, { method: "DELETE" });
   }
 
-  // Sincronizar lista de partidas del servidor al store local
-  // (usado internamente, no se exporta — GameLobby hace su propio polling)
-  const syncGamesFromServer = useCallback(async (): Promise<Game[]> => {
-    const res = await fetch("/api/games");
-    const data = await res.json();
-    if (!res.ok) return [];
-    const serverGames: Game[] = data.games ?? [];
-    store.setGames(serverGames);
-    return serverGames;
-  }, [store]);
+  // ─── Proceso de pago automático ──────────────────────────────────────────────
+  // Ejecuta el pago automáticamente si el usuario conectado es el perdedor.
+  // Se llama externamente desde CoinFlipAnimation en onClick O automáticamente.
+  const payWinner = useCallback(
+    async (game: Game) => {
+      const addr = walletRef.current;
+      if (!addr) { setError("Conecta tu wallet primero"); return null; }
+      if (game.winner === addr) { setError("Eres el ganador, no necesitas pagar"); return null; }
+      if (game.status === "paid") return game;
 
-  // --- Polling: Jugador 1 espera que alguien se una ---
-  function startPollingForOpponent(gameId: string) {
-    stopPolling();
-    pollingRef.current = setInterval(async () => {
-      const game = await apiGetGame(gameId);
-      if (!game) {
-        stopPolling();
-        return;
-      }
-      if (game.player2 && game.status === "matched") {
-        stopPolling();
-        store.updateGame(gameId, game);
-        store.setCurrentGame(game);
-        // El jugador 1 ve la animación pero NO dispara resolveGame (lo hace player 2)
-        setFlipState("flipping");
-        // Esperar a que el servidor resuelva (player2 llamó a /api/resolve)
-        pollForResolution(gameId);
-      }
-    }, POLL_INTERVAL_MS);
-  }
+      setFlipState("paying");
+      setError(null);
 
-  // Jugador 1 hace polling esperando resultado
-  function pollForResolution(gameId: string) {
-    const interval = setInterval(async () => {
-      const game = await apiGetGame(gameId);
-      if (!game) {
-        clearInterval(interval);
-        return;
-      }
-      if (game.status === "resolved" || game.status === "paid") {
-        clearInterval(interval);
-        store.updateGame(gameId, game);
-        store.setCurrentGame(game);
-        store.addToHistory(game);
+      try {
+        const betLamports = BigInt(Math.round(game.betSol * 1_000_000_000));
+        const sig = await sendSolRef.current({
+          amount: betLamports,
+          destination: game.winner!,
+        });
+
+        const sigStr = String(sig ?? "");
+        const updates = { winnerTxSig: sigStr, status: "paid" as const };
+
+        // Persistir pago en servidor también para que el ganador lo vea
+        await apiPatchGame(game.id, updates);
+
+        storeRef.current.updateGame(game.id, updates);
+        const updatedGame = { ...game, ...updates };
+        storeRef.current.setCurrentGame(updatedGame);
+        storeRef.current.addToHistory(updatedGame);
         setFlipState("done");
+
+        return updatedGame;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Error al enviar el pago");
+        setFlipState("done");
+        return null;
       }
-    }, POLL_INTERVAL_MS);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  // ─── Polling: Jugador 1 espera que alguien se una ────────────────────────────
+  function startOpponentPoll(gameId: string) {
+    stopOpponentPoll();
+    opponentPollRef.current = setInterval(async () => {
+      const game = await apiGetGame(gameId);
+      if (!game) {
+        // La partida desapareció (fue eliminada por timeout u otro motivo)
+        stopOpponentPoll();
+        return;
+      }
+
+      // Un oponente se unió y player2 ya está resolviendo
+      if (game.player2 && (game.status === "matched" || game.status === "resolved")) {
+        stopOpponentPoll();
+        storeRef.current.updateGame(gameId, game);
+        storeRef.current.setCurrentGame(game);
+        setFlipState("flipping");
+        // Ahora esperar el resultado final
+        startResolvePoll(gameId);
+      }
+    }, POLL_PLAYER1_MS);
   }
 
-  function stopPolling() {
-    if (pollingRef.current) {
-      clearInterval(pollingRef.current);
-      pollingRef.current = null;
-    }
+  // ─── Polling: Jugador 1 espera resultado tras unirse el oponente ─────────────
+  function startResolvePoll(gameId: string) {
+    stopResolvePoll();
+    resolvePollRef.current = setInterval(async () => {
+      const game = await apiGetGame(gameId);
+      if (!game) {
+        stopResolvePoll();
+        return;
+      }
+
+      if (game.status === "resolved" || game.status === "paid") {
+        stopResolvePoll();
+        storeRef.current.updateGame(gameId, game);
+        storeRef.current.setCurrentGame(game);
+        storeRef.current.addToHistory(game);
+        setFlipState("done");
+
+        // Pago automático si el jugador 1 perdió
+        const addr = walletRef.current;
+        if (addr && game.loser === addr && game.status === "resolved") {
+          await payWinner(game);
+        }
+
+        // Limpiar partida del servidor cuando jugador 1 ya tiene el resultado
+        await apiDeleteGame(gameId);
+      }
+    }, POLL_PLAYER1_MS);
   }
 
-  // Cleanup al desmontar
-  useEffect(() => {
-    return () => stopPolling();
-  }, []);
-
-  // --- Player 1: Crear partida ---
+  // ─── Player 1: Crear partida ─────────────────────────────────────────────────
   const createGame = useCallback(
     async (betSol: number, guess: GameGuess) => {
       if (!session || !walletAddress) {
@@ -150,15 +212,28 @@ export function useP2PFlip() {
       };
 
       try {
-        const serverGame = await apiCreateGame(localGame);
-        if (!serverGame) throw new Error("No se pudo crear la partida");
+        const res = await fetch("/api/games", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: localGame.id,
+            player1: localGame.player1,
+            player1Guess: localGame.player1Guess,
+            betSol: localGame.betSol,
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Error al crear partida");
+
+        const serverGame: Game = data.game;
 
         store.createGame(serverGame);
         store.setCurrentGame(serverGame);
         setFlipState("waiting");
 
-        // Iniciar polling para esperar oponente
-        startPollingForOpponent(serverGame.id);
+        // Iniciar polling esperando oponente
+        startOpponentPoll(serverGame.id);
 
         return serverGame;
       } catch (err) {
@@ -167,10 +242,10 @@ export function useP2PFlip() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [session, walletAddress, store],
+    [session, walletAddress],
   );
 
-  // --- Player 2: Unirse a una partida ---
+  // ─── Player 2: Unirse a una partida ─────────────────────────────────────────
   const joinGame = useCallback(
     async (gameId: string, guess: GameGuess) => {
       if (!session || !walletAddress) {
@@ -181,7 +256,7 @@ export function useP2PFlip() {
       setError(null);
 
       try {
-        // Actualizar en servidor: player2 se une
+        // Actualizar servidor: player2 se une
         const joined = await apiPatchGame(gameId, {
           player2: walletAddress,
           player2Guess: guess,
@@ -197,17 +272,17 @@ export function useP2PFlip() {
         const resolved = await resolveGame(joined);
         return resolved;
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Error al unirse a la partida",
-        );
+        setError(err instanceof Error ? err.message : "Error al unirse a la partida");
         return null;
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [session, walletAddress, store],
+    [session, walletAddress],
   );
 
-  // Resolver — determinar ganador en servidor, luego actualizar
+  // ─── Resolver: determinar ganador ────────────────────────────────────────────
+  // Solo lo llama Player 2. Persiste el resultado en el servidor para que Player 1
+  // lo lea vía polling. NO elimina la partida aquí (lo hace Player 1 al leerla).
   const resolveGame = useCallback(
     async (game: Game) => {
       setFlipState("flipping");
@@ -227,100 +302,49 @@ export function useP2PFlip() {
         });
 
         const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Error al resolver la partida");
 
-        if (!res.ok) {
-          throw new Error(data.error || "Error al resolver la partida");
-        }
-
-        const loser =
-          data.winner === game.player1 ? game.player2 : game.player1;
+        const loser = data.winner === game.player1 ? game.player2 : game.player1;
 
         const updates: Partial<Game> = {
           winner: data.winner,
-          loser: loser,
+          loser,
           outcome: data.outcome,
           status: "resolved",
           resolvedAt: Date.now(),
         };
 
-        // Persistir resultado en servidor
+        // Persistir resultado en servidor para que player 1 lo vea en polling
         await apiPatchGame(game.id, updates);
 
         store.updateGame(game.id, updates);
         const resolvedGame = { ...game, ...updates };
         store.setCurrentGame(resolvedGame);
         store.addToHistory(resolvedGame);
-
-        // Limpiar del servidor tras resolución
-        await apiDeleteGame(game.id);
-
         setFlipState("done");
+
+        // Si player 2 es el perdedor, pagar automáticamente
+        if (walletAddress && resolvedGame.loser === walletAddress && resolvedGame.status === "resolved") {
+          await payWinner(resolvedGame);
+        }
+
+        // Player 2 NO elimina la partida — la deja en "resolved" para que player 1 la lea
+        // La limpieza la hace player 1 al detectar el resultado, o el auto-cleanup de 10 min
 
         return resolvedGame;
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Error al resolver la partida",
-        );
+        setError(err instanceof Error ? err.message : "Error al resolver la partida");
         setFlipState("done");
         return null;
       }
     },
-    [store],
-  );
-
-  // Perdedor paga al ganador directamente
-  const payWinner = useCallback(
-    async (game: Game) => {
-      if (!session || !walletAddress) {
-        setError("Conecta tu wallet primero");
-        return null;
-      }
-
-      if (game.winner === walletAddress) {
-        setError("Eres el ganador, no necesitas pagar");
-        return null;
-      }
-
-      setFlipState("paying");
-      setError(null);
-
-      try {
-        const betLamports = BigInt(Math.round(game.betSol * 1_000_000_000));
-        const sig = await sendSol({
-          amount: betLamports,
-          destination: game.winner!,
-        });
-
-        const sigStr = String(sig ?? "");
-
-        store.updateGame(game.id, {
-          winnerTxSig: sigStr,
-          status: "paid",
-        });
-
-        const updatedGame = {
-          ...game,
-          winnerTxSig: sigStr,
-          status: "paid" as const,
-        };
-        store.setCurrentGame(updatedGame);
-        store.addToHistory(updatedGame);
-        setFlipState("done");
-
-        return updatedGame;
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Error al enviar el pago",
-        );
-        setFlipState("done");
-        return null;
-      }
-    },
-    [session, walletAddress, sendSol, store],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [walletAddress, payWinner],
   );
 
   const reset = useCallback(() => {
-    stopPolling();
+    stopOpponentPoll();
+    stopResolvePoll();
     setFlipState("idle");
     setError(null);
     store.setCurrentGame(null);
