@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useSolTransfer, useWalletSession } from "@solana/react-hooks";
 import {
   type Game,
@@ -11,6 +11,8 @@ import {
 
 export type FlipState = "idle" | "waiting" | "flipping" | "done" | "paying";
 
+const POLL_INTERVAL_MS = 2500; // polling para el jugador 1 esperando oponente
+
 export function useP2PFlip() {
   const session = useWalletSession();
   const { send: sendSol, isSending } = useSolTransfer();
@@ -18,10 +20,117 @@ export function useP2PFlip() {
 
   const [flipState, setFlipState] = useState<FlipState>("idle");
   const [error, setError] = useState<string | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const walletAddress = session?.account.address.toString() ?? null;
 
-  // Player 1: Crear partida (solo registra intención, sin TX)
+  // --- Helpers API ---
+
+  async function apiCreateGame(game: Game): Promise<Game | null> {
+    const res = await fetch("/api/games", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: game.id,
+        player1: game.player1,
+        player1Guess: game.player1Guess,
+        betSol: game.betSol,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Error al crear partida");
+    return data.game as Game;
+  }
+
+  async function apiPatchGame(
+    gameId: string,
+    updates: Partial<Game>,
+  ): Promise<Game | null> {
+    const res = await fetch(`/api/games/${gameId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Error al actualizar partida");
+    return data.game as Game;
+  }
+
+  async function apiGetGame(gameId: string): Promise<Game | null> {
+    const res = await fetch(`/api/games/${gameId}`);
+    if (res.status === 404) return null;
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Error al obtener partida");
+    return data.game as Game;
+  }
+
+  async function apiDeleteGame(gameId: string): Promise<void> {
+    await fetch(`/api/games/${gameId}`, { method: "DELETE" });
+  }
+
+  // Sincronizar lista de partidas del servidor al store local
+  // (usado internamente, no se exporta — GameLobby hace su propio polling)
+  const syncGamesFromServer = useCallback(async (): Promise<Game[]> => {
+    const res = await fetch("/api/games");
+    const data = await res.json();
+    if (!res.ok) return [];
+    const serverGames: Game[] = data.games ?? [];
+    store.setGames(serverGames);
+    return serverGames;
+  }, [store]);
+
+  // --- Polling: Jugador 1 espera que alguien se una ---
+  function startPollingForOpponent(gameId: string) {
+    stopPolling();
+    pollingRef.current = setInterval(async () => {
+      const game = await apiGetGame(gameId);
+      if (!game) {
+        stopPolling();
+        return;
+      }
+      if (game.player2 && game.status === "matched") {
+        stopPolling();
+        store.updateGame(gameId, game);
+        store.setCurrentGame(game);
+        // El jugador 1 ve la animación pero NO dispara resolveGame (lo hace player 2)
+        setFlipState("flipping");
+        // Esperar a que el servidor resuelva (player2 llamó a /api/resolve)
+        pollForResolution(gameId);
+      }
+    }, POLL_INTERVAL_MS);
+  }
+
+  // Jugador 1 hace polling esperando resultado
+  function pollForResolution(gameId: string) {
+    const interval = setInterval(async () => {
+      const game = await apiGetGame(gameId);
+      if (!game) {
+        clearInterval(interval);
+        return;
+      }
+      if (game.status === "resolved" || game.status === "paid") {
+        clearInterval(interval);
+        store.updateGame(gameId, game);
+        store.setCurrentGame(game);
+        store.addToHistory(game);
+        setFlipState("done");
+      }
+    }, POLL_INTERVAL_MS);
+  }
+
+  function stopPolling() {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+  }
+
+  // Cleanup al desmontar
+  useEffect(() => {
+    return () => stopPolling();
+  }, []);
+
+  // --- Player 1: Crear partida ---
   const createGame = useCallback(
     async (betSol: number, guess: GameGuess) => {
       if (!session || !walletAddress) {
@@ -31,7 +140,7 @@ export function useP2PFlip() {
 
       setError(null);
 
-      const game: Game = {
+      const localGame: Game = {
         id: generateGameId(),
         player1: walletAddress,
         player1Guess: guess,
@@ -40,16 +149,28 @@ export function useP2PFlip() {
         createdAt: Date.now(),
       };
 
-      store.createGame(game);
-      store.setCurrentGame(game);
-      setFlipState("waiting");
+      try {
+        const serverGame = await apiCreateGame(localGame);
+        if (!serverGame) throw new Error("No se pudo crear la partida");
 
-      return game;
+        store.createGame(serverGame);
+        store.setCurrentGame(serverGame);
+        setFlipState("waiting");
+
+        // Iniciar polling para esperar oponente
+        startPollingForOpponent(serverGame.id);
+
+        return serverGame;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Error al crear partida");
+        return null;
+      }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [session, walletAddress, store],
   );
 
-  // Player 2: Unirse a una partida existente
+  // --- Player 2: Unirse a una partida ---
   const joinGame = useCallback(
     async (gameId: string, guess: GameGuess) => {
       if (!session || !walletAddress) {
@@ -57,42 +178,36 @@ export function useP2PFlip() {
         return null;
       }
 
-      const game = store.games.find((g) => g.id === gameId);
-      if (!game) {
-        setError("Partida no encontrada");
-        return null;
-      }
-
-      if (game.player1 === walletAddress) {
-        setError("No puedes unirte a tu propia partida");
-        return null;
-      }
-
       setError(null);
 
-      store.updateGame(gameId, {
-        player2: walletAddress,
-        player2Guess: guess,
-        status: "matched",
-      });
+      try {
+        // Actualizar en servidor: player2 se une
+        const joined = await apiPatchGame(gameId, {
+          player2: walletAddress,
+          player2Guess: guess,
+          status: "matched",
+        });
+        if (!joined) throw new Error("Partida no encontrada");
 
-      const updatedGame = {
-        ...game,
-        player2: walletAddress,
-        player2Guess: guess,
-        status: "matched" as const,
-      };
-      store.setCurrentGame(updatedGame);
-      setFlipState("flipping");
+        store.updateGame(gameId, joined);
+        store.setCurrentGame(joined);
+        setFlipState("flipping");
 
-      // Resolver automáticamente
-      const resolved = await resolveGame(updatedGame);
-      return resolved;
+        // Player 2 resuelve el juego
+        const resolved = await resolveGame(joined);
+        return resolved;
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Error al unirse a la partida",
+        );
+        return null;
+      }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [session, walletAddress, store],
   );
 
-  // Resolver — determinar ganador (sin transacciones)
+  // Resolver — determinar ganador en servidor, luego actualizar
   const resolveGame = useCallback(
     async (game: Game) => {
       setFlipState("flipping");
@@ -128,10 +243,17 @@ export function useP2PFlip() {
           resolvedAt: Date.now(),
         };
 
+        // Persistir resultado en servidor
+        await apiPatchGame(game.id, updates);
+
         store.updateGame(game.id, updates);
         const resolvedGame = { ...game, ...updates };
         store.setCurrentGame(resolvedGame);
         store.addToHistory(resolvedGame);
+
+        // Limpiar del servidor tras resolución
+        await apiDeleteGame(game.id);
+
         setFlipState("done");
 
         return resolvedGame;
@@ -182,8 +304,6 @@ export function useP2PFlip() {
           status: "paid" as const,
         };
         store.setCurrentGame(updatedGame);
-
-        // Actualizar en historial también
         store.addToHistory(updatedGame);
         setFlipState("done");
 
@@ -200,6 +320,7 @@ export function useP2PFlip() {
   );
 
   const reset = useCallback(() => {
+    stopPolling();
     setFlipState("idle");
     setError(null);
     store.setCurrentGame(null);

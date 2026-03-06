@@ -10,7 +10,7 @@ import {
 } from "../hooks/useGameStore";
 
 export function GameStoreProvider({ children }: { children: ReactNode }) {
-  const [games, setGames] = useState<Game[]>([]);
+  const [games, setGamesState] = useState<Game[]>([]);
   const [currentGame, setCurrentGame] = useState<Game | null>(null);
   const [history, setHistory] = useState<Game[]>([]);
 
@@ -20,11 +20,11 @@ export function GameStoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const createGame = useCallback((game: Game) => {
-    setGames((prev) => [...prev, game]);
+    setGamesState((prev) => [...prev, game]);
   }, []);
 
   const updateGame = useCallback((gameId: string, updates: Partial<Game>) => {
-    setGames((prev) =>
+    setGamesState((prev) =>
       prev.map((g) => (g.id === gameId ? { ...g, ...updates } : g)),
     );
     setCurrentGame((prev) =>
@@ -41,7 +41,12 @@ export function GameStoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const removeGame = useCallback((gameId: string) => {
-    setGames((prev) => prev.filter((g) => g.id !== gameId));
+    setGamesState((prev) => prev.filter((g) => g.id !== gameId));
+  }, []);
+
+  // Reemplaza toda la lista de partidas activas (sincronización con servidor)
+  const setGames = useCallback((newGames: Game[]) => {
+    setGamesState(newGames);
   }, []);
 
   return (
@@ -55,6 +60,7 @@ export function GameStoreProvider({ children }: { children: ReactNode }) {
         setCurrentGame,
         addToHistory,
         removeGame,
+        setGames,
       }}
     >
       {children}

@@ -32,6 +32,8 @@ export interface GameStoreActions {
   setCurrentGame: (game: Game | null) => void;
   addToHistory: (game: Game) => void;
   removeGame: (gameId: string) => void;
+  /** Reemplaza toda la lista de partidas activas (sincronización con servidor) */
+  setGames: (games: Game[]) => void;
 }
 
 export type GameStore = GameStoreState & GameStoreActions;

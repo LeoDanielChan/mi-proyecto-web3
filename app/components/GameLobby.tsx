@@ -1,12 +1,14 @@
 // app/components/GameLobby.tsx
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useWalletSession } from "@solana/react-hooks";
 import { useGameStore, type GameGuess } from "../hooks/useGameStore";
 import { useP2PFlip } from "../hooks/useP2PFlip";
 
 const BET_OPTIONS = [0.01, 0.05, 0.1, 0.5];
+const LOBBY_POLL_MS = 3000; // sincronizar lobby cada 3 s
+
 
 function formatAddress(addr: string): string {
   if (addr.length <= 8) return addr;
@@ -30,6 +32,35 @@ export function GameLobby() {
   const [guess, setGuess] = useState<GameGuess>("heads");
   const [joiningGameId, setJoiningGameId] = useState<string | null>(null);
   const [joinGuess, setJoinGuess] = useState<GameGuess>("tails");
+
+  // Ref estable a setGames para que el efecto de polling no dependa de referencias cambiantes
+  const setGamesRef = useRef(store.setGames);
+  useEffect(() => {
+    setGamesRef.current = store.setGames;
+  });
+
+  // Polling del lobby — efecto con [] (se monta una sola vez, sin re-crear el intervalo)
+  useEffect(() => {
+    let active = true;
+
+    async function poll() {
+      try {
+        const res = await fetch("/api/games");
+        if (!res.ok || !active) return;
+        const data = await res.json();
+        if (active) setGamesRef.current(data.games ?? []);
+      } catch {
+        // silencioso, no interrumpir UX
+      }
+    }
+
+    poll(); // carga inicial inmediata
+    const interval = setInterval(poll, LOBBY_POLL_MS);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, []); // ← array vacío: el intervalo solo se crea al montar el componente
 
   const waitingGames = store.games.filter(
     (g) => g.status === "waiting" && g.player1 !== walletAddress,
@@ -76,13 +107,12 @@ export function GameLobby() {
                   key={side}
                   onClick={() => setGuess(side)}
                   disabled={isBusy}
-                  className={`relative py-4 rounded-xl font-bold text-lg border-2 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                    guess === side
-                      ? side === "heads"
-                        ? "border-primary bg-primary/15 text-foreground glow-purple"
-                        : "border-accent-teal bg-accent-teal/15 text-foreground glow-teal"
-                      : "border-border-low text-muted hover:border-border-strong"
-                  }`}
+                  className={`relative py-4 rounded-xl font-bold text-lg border-2 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${guess === side
+                    ? side === "heads"
+                      ? "border-primary bg-primary/15 text-foreground glow-purple"
+                      : "border-accent-teal bg-accent-teal/15 text-foreground glow-teal"
+                    : "border-border-low text-muted hover:border-border-strong"
+                    }`}
                 >
                   <span className="text-2xl block mb-1">
                     {side === "heads" ? "👑" : "🔵"}
@@ -104,11 +134,10 @@ export function GameLobby() {
                   key={opt}
                   onClick={() => setBetSol(opt)}
                   disabled={isBusy}
-                  className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                    betSol === opt
-                      ? "border-accent-teal bg-accent-teal/10 text-accent-teal"
-                      : "border-border-low text-muted hover:border-border-strong"
-                  }`}
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${betSol === opt
+                    ? "border-accent-teal bg-accent-teal/10 text-accent-teal"
+                    : "border-border-low text-muted hover:border-border-strong"
+                    }`}
                 >
                   {opt}
                 </button>
@@ -172,6 +201,11 @@ export function GameLobby() {
           <span className="ml-auto rounded-full bg-card px-2.5 py-0.5 text-xs font-bold text-muted">
             {waitingGames.length}
           </span>
+          {/* Indicador de sincronización en vivo */}
+          <span className="flex items-center gap-1 text-xs text-muted">
+            <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
+            en vivo
+          </span>
         </div>
 
         {waitingGames.length === 0 ? (
@@ -217,11 +251,10 @@ export function GameLobby() {
                         <button
                           key={side}
                           onClick={() => setJoinGuess(side)}
-                          className={`px-2 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
-                            joinGuess === side
-                              ? "bg-primary/20 text-primary border border-primary/30"
-                              : "bg-card text-muted border border-border-low"
-                          }`}
+                          className={`px-2 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${joinGuess === side
+                            ? "bg-primary/20 text-primary border border-primary/30"
+                            : "bg-card text-muted border border-border-low"
+                            }`}
                         >
                           {side === "heads" ? "👑" : "🔵"}
                         </button>
