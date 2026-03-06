@@ -125,6 +125,21 @@ export function TicTacToeBoard() {
         );
     }
 
+    // ── VISTA: Depositando apuesta ────────────────────────────────────────────────
+    if (tttState === "depositing") {
+        return (
+            <div className="glass-card rounded-2xl p-8 text-center animate-fade-in">
+                <div className="flex flex-col items-center gap-4">
+                    <span className="h-8 w-8 animate-spin rounded-full border-3 border-primary/30 border-t-primary" />
+                    <h2 className="text-lg font-bold text-foreground">Depositando apuesta…</h2>
+                    <p className="text-muted text-sm">
+                        Aprueba la transacción en tu wallet para depositar tu apuesta en el escrow.
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
     // ── VISTA: Tablero activo ────────────────────────────────────────────────────
     if (game && (tttState === "playing" || tttState === "finished" || tttState === "paying")) {
         const opponent = isPlayer1 ? game.player2 : game.player1;
@@ -220,31 +235,23 @@ export function TicTacToeBoard() {
                         </h3>
 
                         {isDraw && (
-                            <p className="text-muted text-sm mb-4">Sin pago — nadie ganó</p>
+                            <p className="text-muted text-sm mb-4">Sin pago — nadie ganó. Las apuestas permanecen en el escrow.</p>
                         )}
 
-                        {!isDraw && iLost && (
+                        {!isDraw && (
                             <div className="mb-4">
                                 {isPaying ? (
                                     <span className="flex items-center justify-center gap-2 text-warning text-sm">
                                         <span className="h-4 w-4 animate-spin rounded-full border-2 border-warning/30 border-t-warning" />
-                                        Enviando {game.betSol} SOL al ganador…
+                                        Procesando pago automático…
                                     </span>
-                                ) : game.winnerTxSig ? (
-                                    <span className="text-success text-sm">✅ Pago enviado</span>
-                                ) : error ? (
-                                    <p className="text-danger text-xs bg-danger/10 rounded-lg p-2">{error}</p>
-                                ) : null}
-                            </div>
-                        )}
-
-                        {!isDraw && iWon && (
-                            <div className="mb-4">
-                                {game.winnerTxSig ? (
+                                ) : game.payoutTxSig ? (
                                     <div>
-                                        <p className="text-success text-sm mb-2">✅ ¡Pago recibido!</p>
+                                        <p className="text-success text-sm mb-2">
+                                            {iWon ? "✅ ¡Pago recibido automáticamente!" : "✅ Pago enviado al ganador"}
+                                        </p>
                                         <a
-                                            href={`https://solscan.io/tx/${game.winnerTxSig}?cluster=devnet`}
+                                            href={`https://solscan.io/tx/${game.payoutTxSig}?cluster=devnet`}
                                             target="_blank"
                                             rel="noreferrer"
                                             className="text-primary text-xs hover:underline"
@@ -255,7 +262,7 @@ export function TicTacToeBoard() {
                                 ) : (
                                     <span className="flex items-center justify-center gap-2 text-accent-teal text-sm">
                                         <span className="h-4 w-4 animate-spin rounded-full border-2 border-accent-teal/30 border-t-accent-teal" />
-                                        Esperando pago del oponente…
+                                        Procesando pago…
                                     </span>
                                 )}
                             </div>
@@ -432,7 +439,7 @@ export function TicTacToeBoard() {
                                     <button
                                         onClick={async () => {
                                             setJoiningId(g.id);
-                                            await joinGame(g.id);
+                                            await joinGame(g.id, g.betSol);
                                             setJoiningId(null);
                                         }}
                                         className="btn-primary rounded-xl px-4 py-2 text-sm shrink-0"

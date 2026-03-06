@@ -4,9 +4,11 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useSolTransfer, useWalletSession } from "@solana/react-hooks";
 import type { TicTacToeGame } from "../types/tictactoe";
 
-export type TTTState = "idle" | "waiting" | "playing" | "paying" | "finished";
+export type TTTState = "idle" | "waiting" | "depositing" | "playing" | "paying" | "finished";
 
 const POLL_MS = 1500; // actualizar tablero cada 1.5s
+
+const HOUSE_WALLET = process.env.NEXT_PUBLIC_HOUSE_WALLET ?? "";
 
 function generateId(): string {
     return `ttt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -65,30 +67,44 @@ export function useTicTacToe() {
         await fetch(`/api/tictactoe/${gameId}`, { method: "DELETE" });
     }
 
-    // ── Pago automático ──────────────────────────────────────────────────────────
+    // ── Depósito en escrow (house wallet) ────────────────────────────────────────
 
-    const payWinner = useCallback(async (g: TicTacToeGame) => {
-        const addr = walletRef.current;
-        if (!addr || g.loserAddress !== addr || g.winnerAddress === addr) return;
-        if (g.winner === "draw" || g.winnerTxSig) return;
+    async function depositToEscrow(betSol: number): Promise<string> {
+        if (!HOUSE_WALLET) throw new Error("House wallet no configurada");
+        const lamports = BigInt(Math.round(betSol * 1_000_000_000));
+        const sig = await sendSolRef.current({
+            amount: lamports,
+            destination: HOUSE_WALLET,
+        });
+        return String(sig ?? "");
+    }
+
+    // ── Pago automático server-side ──────────────────────────────────────────────
+
+    const payoutTriggeredRef = useRef<Set<string>>(new Set());
+
+    async function triggerServerPayout(gameId: string) {
+        // Evitar llamadas duplicadas
+        if (payoutTriggeredRef.current.has(gameId)) return;
+        payoutTriggeredRef.current.add(gameId);
 
         setIsPaying(true);
         try {
-            const lamports = BigInt(Math.round(g.betSol * 1_000_000_000));
-            const sig = await sendSolRef.current({
-                amount: lamports,
-                destination: g.winnerAddress!,
+            const res = await fetch("/api/tictactoe/payout", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ gameId }),
             });
-            const sigStr = String(sig ?? "");
-            await apiPatch(g.id, { action: "paid", winnerTxSig: sigStr });
-            setGame((prev) => prev ? { ...prev, winnerTxSig: sigStr } : prev);
+            const data = await res.json();
+            if (res.ok && data.game) {
+                setGame(data.game);
+            }
         } catch (err) {
-            setError(err instanceof Error ? err.message : "Error al pagar");
+            console.error("Error en payout automático:", err);
         } finally {
             setIsPaying(false);
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }
 
     // ── Polling de estado de la partida activa ───────────────────────────────────
 
@@ -101,7 +117,6 @@ export function useTicTacToe() {
             const updated = await apiGet(gameId);
             if (!updated) {
                 pollFailCountRef.current += 1;
-                // Only stop polling after 3 consecutive failures
                 if (pollFailCountRef.current >= 3) { stopPoll(); }
                 return;
             }
@@ -114,10 +129,9 @@ export function useTicTacToe() {
             if (updated.status === "finished") {
                 stopPoll();
                 setTttState("finished");
-                // Pago automático si soy el perdedor
-                const addr = walletRef.current;
-                if (addr && updated.loserAddress === addr && updated.winner !== "draw") {
-                    await payWinner(updated);
+                // Pago automático server-side (cualquier jugador puede triggerearlo)
+                if (updated.winner !== "draw" && !updated.payoutTxSig) {
+                    await triggerServerPayout(updated.id);
                 }
             }
         }, POLL_MS);
@@ -133,18 +147,23 @@ export function useTicTacToe() {
         } catch { /* silencioso */ }
     }
 
-    // ── Crear partida ────────────────────────────────────────────────────────────
+    // ── Crear partida (con depósito al escrow) ──────────────────────────────────
 
     const createGame = useCallback(async (betSol: number) => {
         if (!walletAddress) { setError("Conecta tu wallet primero"); return; }
         setError(null);
 
         try {
+            // 1. Depositar apuesta en el escrow
+            setTttState("depositing");
+            const txSig = await depositToEscrow(betSol);
+
+            // 2. Crear partida en el servidor con la firma del depósito
             const id = generateId();
             const res = await fetch("/api/tictactoe", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ id, player1: walletAddress, betSol }),
+                body: JSON.stringify({ id, player1: walletAddress, betSol, player1TxSig: txSig }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || "Error al crear partida");
@@ -153,24 +172,35 @@ export function useTicTacToe() {
             startPoll(data.game.id);
         } catch (err) {
             setError(err instanceof Error ? err.message : "Error al crear");
+            setTttState("idle");
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [walletAddress]);
 
-    // ── Unirse a partida ─────────────────────────────────────────────────────────
+    // ── Unirse a partida (con depósito al escrow) ───────────────────────────────
 
-    const joinGame = useCallback(async (gameId: string) => {
+    const joinGame = useCallback(async (gameId: string, betSol: number) => {
         if (!walletAddress) { setError("Conecta tu wallet primero"); return; }
         setError(null);
 
         try {
-            const joined = await apiPatch(gameId, { action: "join", player2: walletAddress });
+            // 1. Depositar apuesta en el escrow
+            setTttState("depositing");
+            const txSig = await depositToEscrow(betSol);
+
+            // 2. Unirse a la partida con la firma del depósito
+            const joined = await apiPatch(gameId, {
+                action: "join",
+                player2: walletAddress,
+                player2TxSig: txSig,
+            });
             if (!joined) throw new Error("No se pudo unir");
             setGame(joined);
             setTttState("playing");
             startPoll(gameId);
         } catch (err) {
             setError(err instanceof Error ? err.message : "Error al unirse");
+            setTttState("idle");
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [walletAddress]);
@@ -191,7 +221,15 @@ export function useTicTacToe() {
                 player: walletAddress,
                 cellIndex,
             });
-            if (updated) setGame(updated);
+            if (updated) {
+                setGame(updated);
+                // Si el movimiento terminó la partida, trigger payout inmediato
+                if (updated.status === "finished" && updated.winner !== "draw" && !updated.payoutTxSig) {
+                    setTttState("finished");
+                    stopPoll();
+                    await triggerServerPayout(updated.id);
+                }
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : "Movimiento inválido");
         }

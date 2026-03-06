@@ -32,7 +32,7 @@ export async function GET() {
 // POST /api/tictactoe — crear nueva partida
 export async function POST(request: Request) {
     try {
-        const { id, player1, betSol } = await request.json();
+        const { id, player1, betSol, player1TxSig } = await request.json();
         if (!id || !player1 || betSol == null)
             return NextResponse.json({ error: "Faltan parámetros" }, { status: 400 });
 
@@ -58,6 +58,7 @@ export async function POST(request: Request) {
             board: Array(9).fill(null),
             status: "waiting",
             createdAt: Date.now(),
+            player1TxSig: player1TxSig || undefined,
         };
 
         store.set(id, game);

@@ -60,7 +60,7 @@ export async function PATCH(
 
         // ── Unirse a la partida (body: { action: "join", player2 }) ──────────────
         if (body.action === "join") {
-            const { player2 } = body;
+            const { player2, player2TxSig } = body;
             if (!player2)
                 return NextResponse.json({ error: "Falta player2" }, { status: 400 });
             if (game.status !== "waiting")
@@ -73,6 +73,7 @@ export async function PATCH(
             const updated: TicTacToeGame = {
                 ...game,
                 player2,
+                player2TxSig: player2TxSig || undefined,
                 status: "playing",
                 currentTurn: game.player1, // X (player1) empieza siempre
                 lastMoveAt: Date.now(),

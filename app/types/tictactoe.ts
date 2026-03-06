@@ -14,6 +14,9 @@ export interface TicTacToeGame {
     loserAddress?: string;
     winningCells?: number[];   // índices de las 3 celdas ganadoras (para resaltar)
     winnerTxSig?: string;
+    player1TxSig?: string;     // tx de depósito del player1 al escrow
+    player2TxSig?: string;     // tx de depósito del player2 al escrow
+    payoutTxSig?: string;      // tx de pago automático del escrow al ganador
     createdAt: number;
     lastMoveAt?: number;
 }
