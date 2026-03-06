@@ -7,6 +7,7 @@ import {
   useWalletSession,
 } from "@solana/react-hooks";
 import { useState } from "react";
+import { createPortal } from "react-dom";
 
 function formatAddress(addr: string): string {
   if (addr.length <= 8) return addr;
@@ -85,71 +86,86 @@ export function WalletConnect() {
         )}
       </button>
 
-      {/* Modal */}
-      {showModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in"
-          onClick={() => setShowModal(false)}
-        >
+      {/* Modal — rendered via portal to escape header's backdrop-blur containing block */}
+      {showModal && createPortal(
+        <>
+          {/* Backdrop */}
           <div
-            className="glass-card w-full max-w-sm rounded-2xl p-6 animate-slide-up mx-4"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm animate-fade-in"
+            onClick={() => setShowModal(false)}
+          />
+          {/* Modal card — centered with fixed positioning */}
+          <div
+            className="fixed z-50 animate-slide-up-center"
+            style={{
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              width: "calc(100% - 2rem)",
+              maxWidth: "24rem",
+            }}
           >
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="text-lg font-bold text-foreground">
-                Conectar Wallet
-              </h3>
-              <button
-                onClick={() => setShowModal(false)}
-                className="text-muted hover:text-foreground transition cursor-pointer text-xl leading-none"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              {connectors.length === 0 && (
-                <p className="text-muted text-sm text-center py-4">
-                  No se detectaron wallets.
-                  <br />
-                  <a
-                    href="https://phantom.app/"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-primary hover:underline"
-                  >
-                    Instala Phantom →
-                  </a>
-                </p>
-              )}
-
-              {connectors.map((connector) => (
+            <div
+              className="glass-card w-full rounded-2xl p-6 max-h-[80vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-5">
+                <h3 className="text-lg font-bold text-foreground">
+                  Conectar Wallet
+                </h3>
                 <button
-                  key={connector.id}
-                  onClick={async () => {
-                    try {
-                      await connect(connector.id);
-                      setShowModal(false);
-                    } catch {
-                      // handled upstream
-                    }
-                  }}
-                  disabled={status === "connecting"}
-                  className="w-full flex items-center justify-between rounded-xl border border-border-low bg-card px-4 py-3.5 text-left transition hover:bg-card-hover hover:-translate-y-0.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={() => setShowModal(false)}
+                  className="text-muted hover:text-foreground transition cursor-pointer text-xl leading-none"
                 >
-                  <span className="font-medium text-foreground">
-                    {connector.name}
-                  </span>
-                  <span className="h-2.5 w-2.5 rounded-full bg-border-low transition group-hover:bg-primary" />
+                  ✕
                 </button>
-              ))}
-            </div>
+              </div>
 
-            <p className="text-muted text-xs text-center mt-4">
-              Red: Devnet • Solo para demo
-            </p>
+              <div className="space-y-2">
+                {connectors.length === 0 && (
+                  <p className="text-muted text-sm text-center py-4">
+                    No se detectaron wallets.
+                    <br />
+                    <a
+                      href="https://phantom.app/"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-primary hover:underline"
+                    >
+                      Instala Phantom →
+                    </a>
+                  </p>
+                )}
+
+                {connectors.map((connector) => (
+                  <button
+                    key={connector.id}
+                    onClick={async () => {
+                      try {
+                        await connect(connector.id);
+                        setShowModal(false);
+                      } catch {
+                        // handled upstream
+                      }
+                    }}
+                    disabled={status === "connecting"}
+                    className="w-full flex items-center justify-between rounded-xl border border-border-low bg-card px-4 py-3.5 text-left transition hover:bg-card-hover hover:-translate-y-0.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <span className="font-medium text-foreground">
+                      {connector.name}
+                    </span>
+                    <span className="h-2.5 w-2.5 rounded-full bg-border-low transition group-hover:bg-primary" />
+                  </button>
+                ))}
+              </div>
+
+              <p className="text-muted text-xs text-center mt-4">
+                Red: Devnet • Solo para demo
+              </p>
+            </div>
           </div>
-        </div>
+        </>,
+        document.body,
       )}
     </>
   );

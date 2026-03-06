@@ -7,13 +7,15 @@ declare global {
     var __ttt_games: Map<string, TicTacToeGame> | undefined;
 }
 
-const TEN_MIN = 10 * 60 * 1000;
+const THIRTY_MIN = 30 * 60 * 1000;
 
 function getStore(): Map<string, TicTacToeGame> {
     if (!global.__ttt_games) global.__ttt_games = new Map();
     const now = Date.now();
     for (const [id, g] of global.__ttt_games) {
-        if (now - g.createdAt > TEN_MIN) global.__ttt_games.delete(id);
+        // Use the most recent activity timestamp so active games aren't deleted
+        const lastActivity = g.lastMoveAt ?? g.createdAt;
+        if (now - lastActivity > THIRTY_MIN) global.__ttt_games.delete(id);
     }
     return global.__ttt_games;
 }

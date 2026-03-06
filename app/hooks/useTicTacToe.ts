@@ -92,11 +92,20 @@ export function useTicTacToe() {
 
     // ── Polling de estado de la partida activa ───────────────────────────────────
 
+    const pollFailCountRef = useRef(0);
+
     function startPoll(gameId: string) {
         stopPoll();
+        pollFailCountRef.current = 0;
         pollRef.current = setInterval(async () => {
             const updated = await apiGet(gameId);
-            if (!updated) { stopPoll(); return; }
+            if (!updated) {
+                pollFailCountRef.current += 1;
+                // Only stop polling after 3 consecutive failures
+                if (pollFailCountRef.current >= 3) { stopPoll(); }
+                return;
+            }
+            pollFailCountRef.current = 0;
 
             setGame(updated);
 
