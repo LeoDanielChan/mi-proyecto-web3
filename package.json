@@ -21,11 +21,15 @@
   "version": "0.0.0",
   "private": true,
   "dependencies": {
+    "@langchain/openai": "^1.2.12",
+    "@metaplex-foundation/js": "^0.20.1",
     "@solana/client": "^1.2.0",
     "@solana/react-hooks": "^1.1.5",
+    "@solana/web3.js": "^1.98.4",
     "next": "16.1.5",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "solana-agent-kit": "^2.0.10",
     "ws": "^8.18.3"
   },
   "devDependencies": {
