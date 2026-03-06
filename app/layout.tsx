@@ -15,8 +15,18 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Solana dApp Starter",
-  description: "A minimal Next.js starter powered by @solana/react-hooks",
+  title: "SOL Flip — Apuestas P2P en Solana",
+  description:
+    "Apuesta SOL contra otro jugador en un coin flip P2P. Dos wallets, una moneda, el contrato decide. Construido con Next.js y Solana Devnet.",
+  keywords: [
+    "solana",
+    "sol flip",
+    "apuestas p2p",
+    "coin flip",
+    "devnet",
+    "web3",
+    "crypto",
+  ],
   icons: {
     icon: "/icon.svg",
     shortcut: "/icon.svg",
@@ -30,7 +40,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="es">
       <Providers>
         <body
           suppressHydrationWarning

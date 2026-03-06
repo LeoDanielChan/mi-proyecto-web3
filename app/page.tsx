@@ -1,156 +1,136 @@
+// app/page.tsx
 "use client";
-import { useWalletConnection } from "@solana/react-hooks";
+
+import { WalletConnect } from "./components/WalletConnect";
+import { GameLobby } from "./components/GameLobby";
+import { CoinFlipAnimation } from "./components/CoinFlipAnimation";
+import { GameHistory } from "./components/GameHistory";
+import { GameStoreProvider } from "./components/GameStoreProvider";
 
 export default function Home() {
-  const { connectors, connect, disconnect, wallet, status } =
-    useWalletConnection();
-
-  const address = wallet?.account.address.toString();
-
   return (
-    <div className="relative min-h-screen overflow-x-clip bg-bg1 text-foreground">
-      <main className="relative z-10 mx-auto flex min-h-screen max-w-4xl flex-col gap-10 border-x border-border-low px-6 py-16">
-        <header className="space-y-3">
-          <p className="text-sm uppercase tracking-[0.18em] text-muted">
-            Solana starter kit
-          </p>
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground">
-            Ship a Solana dapp fast
-          </h1>
-          <p className="max-w-3xl text-base leading-relaxed text-muted">
-            Drop in <code className="font-mono">@solana/react-hooks</code>, wrap
-            your tree once, and you get wallet connect/disconnect plus
-            ready-to-use hooks for balances and transactions—no manual RPC
-            wiring.
-          </p>
-          <ul className="mt-4 space-y-2 text-sm text-foreground">
-            <li className="flex gap-2">
-              <span
-                className="mt-1.5 h-2 w-2 rounded-full bg-foreground/60"
-                aria-hidden
-              />
+    <GameStoreProvider>
+      <div className="relative min-h-screen overflow-x-clip bg-bg1 text-foreground bg-grid bg-radial">
+        {/* Ambient glow blobs */}
+        <div className="pointer-events-none fixed inset-0 z-0">
+          <div className="absolute -top-40 -left-40 h-96 w-96 rounded-full bg-primary/5 blur-3xl" />
+          <div className="absolute -bottom-40 -right-40 h-96 w-96 rounded-full bg-accent-teal/5 blur-3xl" />
+          <div className="absolute top-1/2 left-1/2 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/3 blur-3xl" />
+        </div>
+
+        {/* Header */}
+        <header className="sticky top-0 z-30 border-b border-border-low bg-background/80 backdrop-blur-xl">
+          <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3 sm:px-6">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">🎲</span>
               <div>
-                <a
-                  className="font-medium underline underline-offset-2"
-                  href="https://solana.com/docs"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Solana docs
-                </a>{" "}
-                — core concepts, RPC, programs, and client patterns.
+                <h1 className="text-lg font-black tracking-tight">
+                  <span className="gradient-text">SOL Flip</span>
+                </h1>
+                <p className="text-[10px] uppercase tracking-[0.15em] text-muted font-medium">
+                  P2P Game • Devnet
+                </p>
               </div>
-            </li>
-            <li className="flex gap-2">
-              <span
-                className="mt-1.5 h-2 w-2 rounded-full bg-foreground/60"
-                aria-hidden
-              />
-              <div>
-                <a
-                  className="font-medium underline underline-offset-2"
-                  href="https://www.anchor-lang.com/docs/introduction"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Anchor docs
-                </a>{" "}
-                — build and test programs with IDL, macros, and type-safe
-                clients.
-              </div>
-            </li>
-            <li className="flex gap-2">
-              <span
-                className="mt-1.5 h-2 w-2 rounded-full bg-foreground/60"
-                aria-hidden
-              />
-              <div>
-                <a
-                  className="font-medium underline underline-offset-2"
-                  href="https://faucet.solana.com/"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Solana faucet (devnet)
-                </a>{" "}
-                — grab free devnet SOL to try transfers and transactions.
-              </div>
-            </li>
-            <li className="flex gap-2">
-              <span
-                className="mt-1.5 h-2 w-2 rounded-full bg-foreground/60"
-                aria-hidden
-              />
-              <div>
-                <a
-                  className="font-medium underline underline-offset-2"
-                  href="https://github.com/solana-foundation/framework-kit/tree/main/packages/react-hooks"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  @solana/react-hooks README
-                </a>{" "}
-                — how this starter wires the client, connectors, and hooks.
-              </div>
-            </li>
-          </ul>
+            </div>
+            <WalletConnect />
+          </div>
         </header>
 
-        <section className="w-full max-w-3xl space-y-4 rounded-2xl border border-border-low bg-card p-6 shadow-[0_20px_80px_-50px_rgba(0,0,0,0.35)]">
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1">
-              <p className="text-lg font-semibold">Wallet connection</p>
-              <p className="text-sm text-muted">
-                Pick any discovered connector and manage connect / disconnect in
-                one spot.
-              </p>
-            </div>
-            <span className="rounded-full bg-cream px-3 py-1 text-xs font-semibold uppercase tracking-wide text-foreground/80">
-              {status === "connected" ? "Connected" : "Not connected"}
-            </span>
-          </div>
+        {/* Main */}
+        <main className="relative z-10 mx-auto max-w-4xl px-4 py-8 sm:px-6">
+          {/* Hero */}
+          <section className="text-center mb-10 animate-fade-in">
+            <h2 className="text-3xl sm:text-4xl font-black text-foreground mb-3">
+              Apuesta SOL contra
+              <br />
+              <span className="gradient-text">otro jugador</span>
+            </h2>
+            <p className="text-muted text-sm sm:text-base max-w-md mx-auto leading-relaxed">
+              Dos wallets. Una moneda. El contrato decide.
+              <br />
+              Conecta tu wallet, elige tu lado y apuesta.
+            </p>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            {connectors.map((connector) => (
-              <button
-                key={connector.id}
-                onClick={() => connect(connector.id)}
-                disabled={status === "connecting"}
-                className="group flex items-center justify-between rounded-xl border border-border-low bg-card px-4 py-3 text-left text-sm font-medium transition hover:-translate-y-0.5 hover:shadow-sm cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <span className="flex flex-col">
-                  <span className="text-base">{connector.name}</span>
-                  <span className="text-xs text-muted">
-                    {status === "connecting"
-                      ? "Connecting…"
-                      : status === "connected" &&
-                          wallet?.connector.id === connector.id
-                        ? "Active"
-                        : "Tap to connect"}
+            {/* Tech badges */}
+            <div className="flex items-center justify-center gap-2 mt-5 flex-wrap">
+              {["Next.js", "@solana/web3.js", "SystemProgram.transfer", "Devnet"].map(
+                (badge) => (
+                  <span
+                    key={badge}
+                    className="rounded-lg bg-card border border-border-low px-2.5 py-1 text-xs font-mono text-muted"
+                  >
+                    {badge}
                   </span>
-                </span>
-                <span
-                  aria-hidden
-                  className="h-2.5 w-2.5 rounded-full bg-border-low transition group-hover:bg-primary/80"
-                />
-              </button>
-            ))}
+                ),
+              )}
+            </div>
+          </section>
+
+          {/* Two columns on desktop */}
+          <div className="grid gap-6 lg:grid-cols-3">
+            <div className="lg:col-span-2">
+              <GameLobby />
+            </div>
+            <div className="lg:col-span-1">
+              <GameHistory />
+
+              {/* How it works */}
+              <div className="glass-card rounded-2xl p-6 mt-6 animate-fade-in">
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="text-lg">📋</span>
+                  <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">
+                    Cómo funciona
+                  </h3>
+                </div>
+                <ol className="space-y-3 text-sm text-muted">
+                  {[
+                    { icon: "1️⃣", text: "Conecta tu wallet Solana" },
+                    { icon: "2️⃣", text: "Crea una apuesta eligiendo lado y monto" },
+                    { icon: "3️⃣", text: "Espera a que otro jugador se una" },
+                    { icon: "4️⃣", text: "La moneda se lanza on-chain" },
+                    { icon: "5️⃣", text: "El ganador recibe el doble automáticamente" },
+                  ].map((step) => (
+                    <li
+                      key={step.icon}
+                      className="flex items-start gap-2.5"
+                    >
+                      <span className="text-base shrink-0">{step.icon}</span>
+                      <span className="leading-snug">{step.text}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 border-t border-border-low pt-4 text-sm">
-            <span className="rounded-lg border border-border-low bg-cream px-3 py-2 font-mono text-xs">
-              {address ?? "No wallet connected"}
-            </span>
-            <button
-              onClick={() => disconnect()}
-              disabled={status !== "connected"}
-              className="inline-flex items-center gap-2 rounded-lg border border-border-low bg-card px-3 py-2 font-medium transition hover:-translate-y-0.5 hover:shadow-sm cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Disconnect
-            </button>
-          </div>
-        </section>
-      </main>
-    </div>
+          {/* Footer */}
+          <footer className="mt-16 border-t border-border-low pt-6 pb-8 text-center">
+            <p className="text-muted text-xs">
+              SOL Flip • Devnet Demo •{" "}
+              <a
+                href="https://solscan.io/?cluster=devnet"
+                target="_blank"
+                rel="noreferrer"
+                className="text-primary hover:underline"
+              >
+                Solscan Explorer
+              </a>{" "}
+              •{" "}
+              <a
+                href="https://faucet.solana.com/"
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent-teal hover:underline"
+              >
+                Faucet Devnet
+              </a>
+            </p>
+          </footer>
+        </main>
+
+        {/* Coin Flip Overlay */}
+        <CoinFlipAnimation />
+      </div>
+    </GameStoreProvider>
   );
 }
