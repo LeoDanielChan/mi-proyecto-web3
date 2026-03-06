@@ -9,7 +9,6 @@ import { useP2PFlip } from "../hooks/useP2PFlip";
 const BET_OPTIONS = [0.01, 0.05, 0.1, 0.5];
 const LOBBY_POLL_MS = 3000; // sincronizar lobby cada 3 s
 
-
 function formatAddress(addr: string): string {
   if (addr.length <= 8) return addr;
   return `${addr.slice(0, 4)}...${addr.slice(-4)}`;
@@ -22,16 +21,21 @@ function timeAgo(ts: number): string {
   return `${Math.floor(seconds / 3600)}h`;
 }
 
+// Genera un lado aleatorio justo (el jugador 2 no sabe qué eligió el jugador 1)
+function randomGuess(): GameGuess {
+  return Math.random() < 0.5 ? "heads" : "tails";
+}
+
 export function GameLobby() {
   const session = useWalletSession();
   const walletAddress = session?.account.address.toString() ?? null;
   const store = useGameStore();
-  const { createGame, joinGame, flipState, error } = useP2PFlip();
+  const { createGame, joinGame, cancelGame, flipState, error } = useP2PFlip();
 
   const [betSol, setBetSol] = useState(0.05);
   const [guess, setGuess] = useState<GameGuess>("heads");
-  const [joiningGameId, setJoiningGameId] = useState<string | null>(null);
-  const [joinGuess, setJoinGuess] = useState<GameGuess>("tails");
+  const [cancelling, setCancelling] = useState(false);
+  const [joiningId, setJoiningId] = useState<string | null>(null);
 
   // Ref estable a setGames para que el efecto de polling no dependa de referencias cambiantes
   const setGamesRef = useRef(store.setGames);
@@ -62,13 +66,12 @@ export function GameLobby() {
     };
   }, []); // ← array vacío: el intervalo solo se crea al montar el componente
 
-  // Partidas disponibles para unirse: solo las que esperan oponente y no son mías
+  // Partidas disponibles: solo las que esperan oponente y no son mías
   const waitingGames = store.games.filter(
     (g) => g.status === "waiting" && g.player1 !== walletAddress,
   );
 
   // Mi partida activa: cualquier estado en curso (waiting o matched)
-  // Mientras exista, se oculta el formulario de crear para evitar duplicados
   const myWaitingGame = store.games.find(
     (g) =>
       (g.status === "waiting" || g.status === "matched") &&
@@ -93,7 +96,8 @@ export function GameLobby() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Crear partida */}
+
+      {/* ── Crear partida ── */}
       {!myWaitingGame && (
         <div className="glass-card rounded-2xl p-6">
           <div className="flex items-center gap-2 mb-5">
@@ -113,10 +117,10 @@ export function GameLobby() {
                   onClick={() => setGuess(side)}
                   disabled={isBusy}
                   className={`relative py-4 rounded-xl font-bold text-lg border-2 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${guess === side
-                    ? side === "heads"
-                      ? "border-primary bg-primary/15 text-foreground glow-purple"
-                      : "border-accent-teal bg-accent-teal/15 text-foreground glow-teal"
-                    : "border-border-low text-muted hover:border-border-strong"
+                      ? side === "heads"
+                        ? "border-primary bg-primary/15 text-foreground glow-purple"
+                        : "border-accent-teal bg-accent-teal/15 text-foreground glow-teal"
+                      : "border-border-low text-muted hover:border-border-strong"
                     }`}
                 >
                   <span className="text-2xl block mb-1">
@@ -140,8 +144,8 @@ export function GameLobby() {
                   onClick={() => setBetSol(opt)}
                   disabled={isBusy}
                   className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${betSol === opt
-                    ? "border-accent-teal bg-accent-teal/10 text-accent-teal"
-                    : "border-border-low text-muted hover:border-border-strong"
+                      ? "border-accent-teal bg-accent-teal/10 text-accent-teal"
+                      : "border-border-low text-muted hover:border-border-strong"
                     }`}
                 >
                   {opt}
@@ -150,14 +154,12 @@ export function GameLobby() {
             </div>
           </div>
 
-          {/* Error */}
           {error && (
             <div className="mb-4 rounded-xl bg-danger/10 border border-danger/20 p-3 text-danger text-sm">
               {error}
             </div>
           )}
 
-          {/* Botón crear */}
           <button
             onClick={() => createGame(betSol, guess)}
             disabled={isBusy}
@@ -168,7 +170,7 @@ export function GameLobby() {
         </div>
       )}
 
-      {/* Mi partida activa (waiting o matched) */}
+      {/* ── Mi partida activa (waiting o matched) ── */}
       {myWaitingGame && (
         <div className="glass-card rounded-2xl p-6 gradient-border animate-pulse-glow">
           <div className="flex items-center gap-2 mb-4">
@@ -179,6 +181,7 @@ export function GameLobby() {
                 : "Esperando oponente…"}
             </h2>
           </div>
+
           <div className="space-y-2 mb-4">
             <div className="flex justify-between text-sm">
               <span className="text-muted">Tu lado</span>
@@ -197,17 +200,40 @@ export function GameLobby() {
               </span>
             </div>
           </div>
-          <div className="flex items-center gap-2 text-muted text-xs">
+
+          <div className="flex items-center gap-2 text-muted text-xs mb-5">
             <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted/30 border-t-muted" />
             {myWaitingGame.status === "matched"
               ? "Determinando ganador en el servidor…"
               : "El oponente debe abrir la misma URL en su dispositivo"}
           </div>
+
+          {/* Botón cancelar — solo si soy el creador y la partida sigue esperando */}
+          {myWaitingGame.status === "waiting" &&
+            myWaitingGame.player1 === walletAddress && (
+              <button
+                onClick={async () => {
+                  setCancelling(true);
+                  await cancelGame(myWaitingGame.id);
+                  setCancelling(false);
+                }}
+                disabled={cancelling}
+                className="w-full rounded-xl border border-danger/40 bg-danger/10 py-2.5 text-sm font-medium text-danger hover:bg-danger/20 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {cancelling ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-danger/30 border-t-danger" />
+                    Cancelando…
+                  </span>
+                ) : (
+                  "✕ Cancelar apuesta"
+                )}
+              </button>
+            )}
         </div>
       )}
 
-
-      {/* Available Games */}
+      {/* ── Partidas Activas (lobby) ── */}
       <div className="glass-card rounded-2xl p-6">
         <div className="flex items-center gap-2 mb-5">
           <span className="text-2xl">⚔️</span>
@@ -215,7 +241,6 @@ export function GameLobby() {
           <span className="ml-auto rounded-full bg-card px-2.5 py-0.5 text-xs font-bold text-muted">
             {waitingGames.length}
           </span>
-          {/* Indicador de sincronización en vivo */}
           <span className="flex items-center gap-1 text-xs text-muted">
             <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
             en vivo
@@ -238,6 +263,7 @@ export function GameLobby() {
                 key={game.id}
                 className="flex items-center gap-4 rounded-xl border border-border-low bg-card/50 p-4 transition hover:bg-card-hover"
               >
+                {/* Info de la partida */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-mono text-sm text-foreground">
@@ -247,53 +273,34 @@ export function GameLobby() {
                       {timeAgo(game.createdAt)}
                     </span>
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
                     <span className="text-accent-teal font-bold text-sm">
                       {game.betSol} SOL
                     </span>
-                    <span className="text-muted text-xs">
-                      apuesta como{" "}
-                      {game.player1Guess === "heads" ? "👑 Cara" : "🔵 Cruz"}
-                    </span>
+                    {/* No mostramos qué lado eligió el oponente — mantiene el azar */}
+                    <span className="text-muted text-xs">• apuesta aleatoria 🎲</span>
                   </div>
                 </div>
 
-                {joiningGameId === game.id ? (
-                  <div className="flex items-center gap-2">
-                    <div className="flex gap-1">
-                      {(["heads", "tails"] as const).map((side) => (
-                        <button
-                          key={side}
-                          onClick={() => setJoinGuess(side)}
-                          className={`px-2 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${joinGuess === side
-                            ? "bg-primary/20 text-primary border border-primary/30"
-                            : "bg-card text-muted border border-border-low"
-                            }`}
-                        >
-                          {side === "heads" ? "👑" : "🔵"}
-                        </button>
-                      ))}
-                    </div>
-                    <button
-                      onClick={() => joinGame(game.id, joinGuess)}
-                      disabled={isBusy}
-                      className="btn-primary rounded-lg px-3 py-1.5 text-xs disabled:opacity-50"
-                    >
-                      {isBusy ? "…" : "¡Unirme!"}
-                    </button>
+                {/* Botón unirse — lado asignado al azar automáticamente */}
+                {joiningId === game.id ? (
+                  <div className="flex items-center gap-2 text-muted text-sm">
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted/30 border-t-muted" />
+                    Uniéndome…
                   </div>
                 ) : (
                   <button
-                    onClick={() => {
-                      setJoiningGameId(game.id);
-                      // Default to opposite guess
-                      setJoinGuess(
-                        game.player1Guess === "heads" ? "tails" : "heads",
-                      );
+                    onClick={async () => {
+                      if (myWaitingGame) return; // ya tiene partida activa
+                      setJoiningId(game.id);
+                      // El lado se elige al azar — el jugador 2 no sabe qué eligió el jugador 1
+                      await joinGame(game.id, randomGuess());
+                      setJoiningId(null);
                     }}
-                    className="btn-primary rounded-xl px-4 py-2 text-sm"
+                    disabled={isBusy || !!myWaitingGame}
+                    className="btn-primary rounded-xl px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                   >
-                    Unirme →
+                    ⚔️ Unirme
                   </button>
                 )}
               </div>

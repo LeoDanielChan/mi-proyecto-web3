@@ -12,7 +12,7 @@ function formatAddress(addr: string): string {
 
 export function CoinFlipAnimation() {
   const store = useGameStore();
-  const { reset, flipState, payWinner, error } = useP2PFlip();
+  const { reset, flipState, error } = useP2PFlip();
   const session = useWalletSession();
   const walletAddress = session?.account.address.toString() ?? null;
   const game = store.currentGame;
@@ -56,7 +56,19 @@ export function CoinFlipAnimation() {
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-md animate-fade-in">
-      <div className="glass-card rounded-3xl p-8 max-w-md w-full mx-4 text-center animate-slide-up">
+      <div className="glass-card rounded-3xl p-8 max-w-md w-full mx-4 text-center animate-slide-up relative">
+
+        {/* Botón cerrar — solo visible cuando ya hay resultado */}
+        {isResolved && (
+          <button
+            onClick={reset}
+            className="absolute top-4 right-4 h-8 w-8 flex items-center justify-center rounded-full bg-card hover:bg-card-hover text-muted hover:text-foreground transition cursor-pointer text-lg leading-none"
+            aria-label="Cerrar"
+          >
+            ✕
+          </button>
+        )}
+
         {/* Animación de moneda */}
         <div className="coin-container flex justify-center mb-6">
           <div className={`coin ${spinning ? "coin-spinning" : ""}`}>
@@ -84,17 +96,11 @@ export function CoinFlipAnimation() {
                 <p className="font-mono text-sm text-foreground truncate">
                   {formatAddress(game.player1)}
                 </p>
-                <p className="text-xs mt-1">
-                  {game.player1Guess === "heads" ? "👑 Cara" : "🔵 Cruz"}
-                </p>
               </div>
               <div className="rounded-xl bg-card/80 p-3">
                 <p className="text-xs text-muted mb-1">Jugador 2</p>
                 <p className="font-mono text-sm text-foreground truncate">
                   {game.player2 ? formatAddress(game.player2) : "—"}
-                </p>
-                <p className="text-xs mt-1">
-                  {game.player2Guess === "heads" ? "👑 Cara" : "🔵 Cruz"}
                 </p>
               </div>
             </div>
@@ -127,59 +133,41 @@ export function CoinFlipAnimation() {
               </p>
             </div>
 
-            {/* Perdedor: botón de pagar (solo si no se hizo automáticamente) */}
-            {isLoser && !isPaid && (
-              <div className="mb-4">
-                <p className="text-warning text-sm mb-3">
-                  💸 Debes enviar <strong>{game.betSol} SOL</strong> al ganador
-                </p>
-                {error && (
-                  <p className="text-danger text-xs mb-2 bg-danger/10 border border-danger/20 rounded-lg p-2">
-                    {error}
-                  </p>
-                )}
-                <button
-                  onClick={() => payWinner(game)}
-                  disabled={isPaying}
-                  className="w-full btn-gradient rounded-xl py-3.5 text-base disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isPaying ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                      Enviando pago…
-                    </span>
-                  ) : (
-                    `💰 Pagar ${game.betSol} SOL al ganador`
-                  )}
-                </button>
-              </div>
-            )}
-
-            {/* Pagando (automático) */}
+            {/* Perdedor: pago en progreso (automático) */}
             {isLoser && isPaying && (
-              <div className="mb-4">
+              <div className="mb-4 rounded-xl bg-warning/10 border border-warning/20 p-3">
                 <span className="flex items-center justify-center gap-2 text-warning text-sm">
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-warning/30 border-t-warning" />
-                  Enviando pago automático…
+                  Enviando {game.betSol} SOL al ganador…
                 </span>
               </div>
             )}
 
-            {/* Ganador: esperando pago o polling */}
+            {/* Perdedor: pago pendiente (fallback manual si la TX automática falló) */}
+            {isLoser && !isPaid && !isPaying && error && (
+              <div className="mb-4 rounded-xl bg-danger/10 border border-danger/20 p-3">
+                <p className="text-danger text-xs mb-1">{error}</p>
+                <p className="text-warning text-xs">
+                  El pago automático falló. Contacta a tu oponente.
+                </p>
+              </div>
+            )}
+
+            {/* Ganador: esperando pago */}
             {isWinner && !isPaid && (
-              <div className="mb-4">
+              <div className="mb-4 rounded-xl bg-accent-teal/10 border border-accent-teal/20 p-3">
                 <span className="flex items-center justify-center gap-2 text-accent-teal text-sm">
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-accent-teal/30 border-t-accent-teal" />
-                  Esperando que el perdedor envíe {game.betSol} SOL…
+                  Esperando pago de {game.betSol} SOL…
                 </span>
               </div>
             )}
 
             {/* Pago completado */}
             {isPaid && (
-              <div className="mb-4">
+              <div className="mb-4 rounded-xl bg-success/10 border border-success/20 p-3">
                 <p className="text-success text-sm mb-2">
-                  ✅ {isWinner ? "¡Pago recibido!" : "Pago enviado exitosamente"}
+                  ✅ {isWinner ? "¡Pago recibido!" : "Pago enviado"}
                 </p>
                 {game.winnerTxSig && (
                   <a
@@ -194,12 +182,15 @@ export function CoinFlipAnimation() {
               </div>
             )}
 
-            <button
-              onClick={reset}
-              className="w-full btn-primary rounded-xl py-3 text-sm mt-2"
-            >
-              🎲 Jugar de nuevo
-            </button>
+            {/* Botón Jugar de nuevo — solo cuando haya resultado definitivo */}
+            {(isPaid || (!isWinner && !isPaying)) && (
+              <button
+                onClick={reset}
+                className="w-full btn-primary rounded-xl py-3 text-sm mt-2"
+              >
+                🎲 Jugar de nuevo
+              </button>
+            )}
           </div>
         )}
       </div>

@@ -350,6 +350,25 @@ export function useP2PFlip() {
     store.setCurrentGame(null);
   }, [store]);
 
+  // Cancelar partida creada por el jugador 1 antes de que alguien se una
+  const cancelGame = useCallback(
+    async (gameId: string) => {
+      stopOpponentPoll();
+      stopResolvePoll();
+      try {
+        await fetch(`/api/games/${gameId}`, { method: "DELETE" });
+      } catch {
+        // ignorar error de red — limpiar estado local de todas formas
+      }
+      storeRef.current.removeGame(gameId);
+      storeRef.current.setCurrentGame(null);
+      setFlipState("idle");
+      setError(null);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
   return {
     flipState,
     error,
@@ -360,5 +379,6 @@ export function useP2PFlip() {
     resolveGame,
     payWinner,
     reset,
+    cancelGame,
   };
 }
